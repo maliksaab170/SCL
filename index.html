@@ -1,0 +1,1064 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Star Cars London Ltd — Dealer Backoffice (v31 + Investors)</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.45 Arial,Helvetica,sans-serif;background:#f6f7fb;color:#111}
+header{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#fff;position:sticky;top:0;z-index:5}
+#logoBox{width:46px;height:46px;border-radius:12px;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;overflow:hidden}
+#logoBox img{max-width:46px;max-height:46px;border-radius:10px}
+.hdr-actions{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+button{padding:8px 12px;border:1px solid #e5e7eb;background:#fafafa;border-radius:8px;cursor:pointer}
+button:hover{background:#f3f4f6}
+.small{font-size:12px;color:#666}
+nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:1px solid #e5e7eb;background:#fff;position:sticky;top:62px;z-index:4}
+nav button.active{background:#111;color:#fff;border-color:#111}
+main{padding:12px;max-width:1220px;margin:0 auto}
+.card{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:10px 0;background:#fff}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+input,select,textarea{padding:8px;border:1px solid #e5e7eb;border-radius:8px}
+.table{width:100%;border-collapse:collapse}
+.table th,.table td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+.table th.right,.table td.right{text-align:right}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.badge{padding:3px 6px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
+.err{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:8px;border-radius:8px}
+.warn{color:#b91c1c;font-weight:600}
+.ok{color:#065f46;font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px}
+.media-thumb{width:80px;height:60px;object-fit:cover;border:1px solid #ddd;border-radius:6px;margin-right:6px}
+footer{padding:14px 12px;color:#6b7280;text-align:center}
+@media print{header,nav,.no-print{display:none!important}body{background:#fff}.card{border:none}}
+</style>
+</head>
+<body>
+<header>
+  <div id="logoBox">SC</div>
+  <div>
+    <div style="font-weight:800">Star Cars London Ltd</div>
+    <div class="small">Dealer Backoffice — v31 + Investors</div>
+  </div>
+  <div class="hdr-actions">
+    <span id="who" class="small"></span>
+    <button onclick="logout()">Logout</button>
+    <button onclick="backupJSON()">Backup</button>
+    <button onclick="restoreJSONMerge()">Restore (merge)</button>
+    <button onclick="restoreJSONReplace()">Restore (replace)</button>
+    <button onclick="exportAllCSV()">Export CSVs</button>
+  </div>
+</header>
+<nav id="nav"></nav>
+<main id="app"><div class="small">Loading…</div></main>
+<footer class="small">© Star Cars London Ltd</footer>
+
+<script>
+(function(){
+  // Utils
+  window.onerror = function(message, source, lineno, colno, error){
+    var app=document.getElementById('app');
+    app.innerHTML='<div class="err"><b>Script error:</b> '+message+'<br><div class="small">Line '+lineno+':'+colno+'</div></div>';
+  };
+  var KEY='starcars_safe_full_db';
+  function uid(){ return (Date.now().toString(36)+Math.random().toString(36).slice(2,6)); }
+  function fmtMoney(n){ n=Number(n||0); return '£'+n.toFixed(2); }
+  function todayISO(){ return new Date().toISOString().slice(0,10); }
+  function ddmmyyyy(iso){ if(!iso||iso.indexOf('-')<0) return ''; var p=iso.split('-'); return p[2]+'/'+p[1]+'/'+p[0]; }
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(db)); }catch(e){} }
+  function monthKey(d){ return (d||'').slice(0,7); }
+
+  // DB
+  var db; try{ db = JSON.parse(localStorage.getItem(KEY)||'{}'); }catch(e){ db={}; }
+  db.users = Array.isArray(db.users)&&db.users.length? db.users : [{username:'admin',password:'admin',role:'admin',perms:{}}];
+  db.company = db.company || {name:'Star Cars London Ltd', address:'', phone:'', email:'', vatNumber:'', companyNumber:'', website:'', terms:'All vehicles sold under our standard terms.'};
+  db.logo = db.logo || '';
+  db.vehicles = Array.isArray(db.vehicles)? db.vehicles : [];
+  db.vehicleExpenses = Array.isArray(db.vehicleExpenses)? db.vehicleExpenses : [];
+  db.showroomExpenses = Array.isArray(db.showroomExpenses)? db.showroomExpenses : [];
+  db.sales = Array.isArray(db.sales)? db.sales : [];
+  db.todo = Array.isArray(db.todo)? db.todo : []; 
+  db.partners = Array.isArray(db.partners)? db.partners : [{name:'Director A', balance:0, tx:[]},{name:'Director B', balance:0, tx:[]}];
+  db.integrations = db.integrations || { dvlaApiKey:'', dvlaProxy:'', gistId:'', gistToken:'' };
+  db.counters = db.counters || { invPrefix:'SC', nextInv:1 };
+  db.vat = db.vat || { mode:'none', rate:0 };
+  db.investorPool = (typeof db.investorPool==='number') ? db.investorPool : 0;
+  db.investors = Array.isArray(db.investors) ? db.investors : []; // {id,name,balance,tx:[]}
+
+  // IDs
+  db.vehicles.forEach(function(v){ if(!v.id) v.id=uid(); });
+  db.vehicleExpenses.forEach(function(e){ if(!e.id) e.id=uid(); });
+  db.showroomExpenses.forEach(function(e){ if(!e.id) e.id=uid(); });
+  db.sales.forEach(function(s){ if(!s.id) s.id=uid(); });
+  db.todo.forEach(function(t){ if(!t.id) t.id=uid(); });
+  db.investors.forEach(function(i){ if(!i.id) i.id=uid(); });
+
+  // Session
+  var session; try{ session = JSON.parse(sessionStorage.getItem('sc_session')||'null'); }catch(e){ session=null; }
+  function loginDialog(){
+    var u = prompt('Username (default admin)') || 'admin';
+    var p = prompt('Password (default admin)') || 'admin';
+    var user=null;
+    db.users.forEach(function(us){ if(us.username===u && us.password===p){ user=us; } });
+    if(!user){ alert('Wrong login'); return loginDialog(); }
+    session = {username:user.username, role:user.role, perms:user.perms||{}};
+    sessionStorage.setItem('sc_session', JSON.stringify(session));
+  }
+  if(!session){ loginDialog(); }
+  window.logout = function(){ session=null; sessionStorage.removeItem('sc_session'); location.reload(); };
+
+  function canView(tab){ if(session && session.role==='admin') return true; var p=session && session.perms && session.perms[tab]; return !!(p && p.view); }
+  function canEdit(tab){ if(session && session.role==='admin') return true; var p=session && session.perms && session.perms[tab]; return !!(p && p.edit); }
+
+  // Backup/Restore/Export
+  window.backupJSON = function(){
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(db,null,2)],{type:'application/json'})); a.download='starcars-backup-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+  };
+  function loadFile(cb){ var i=document.createElement('input'); i.type='file'; i.accept='.json'; i.onchange=function(){ var f=i.files[0]; var r=new FileReader(); r.onload=function(){ cb(r.result); }; r.readAsText(f); }; i.click(); }
+  function dedupById(arr, key){
+    var seen={}; var out=[]; var k=key||'id';
+    (arr||[]).forEach(function(o){ var v=o && (o[k]||o.username||JSON.stringify(o)); if(!seen[v]){ seen[v]=1; out.push(o); } });
+    return out;
+  }
+  window.restoreJSONReplace = function(){
+    loadFile(function(txt){
+      try{ db = JSON.parse(txt);
+        save(); alert('Replaced. Reloading…'); location.reload();
+      }catch(e){ alert('Invalid file'); }
+    });
+  };
+  window.restoreJSONMerge = function(){
+    loadFile(function(txt){
+      try{
+        var incoming=JSON.parse(txt);
+        ['vehicles','vehicleExpenses','showroomExpenses','sales','todo','investors'].forEach(function(key){
+          db[key] = dedupById([].concat(db[key]||[], incoming[key]||[]));
+        });
+        if(incoming.partners){
+          var cur = (db.partners||[]).slice();
+          incoming.partners.forEach(function(p,i){
+            if(!cur[i]) cur[i]={name:p.name||('Director '+(i+1)), balance:0, tx:[]};
+            cur[i].name = p.name || cur[i].name;
+            cur[i].tx = dedupById([].concat(cur[i].tx||[], p.tx||[]));
+            cur[i].balance = Number(p.balance||cur[i].balance||0);
+          });
+          db.partners = cur;
+        }
+        db.users = dedupById([].concat(db.users||[], incoming.users||[]), 'username');
+        if(incoming.company) db.company = Object.assign({}, db.company, incoming.company);
+        if(incoming.logo) db.logo = incoming.logo;
+        if(incoming.integrations) db.integrations = Object.assign({}, db.integrations, incoming.integrations);
+        if(incoming.counters) db.counters = Object.assign({}, db.counters, incoming.counters);
+        if(typeof incoming.investorPool==='number') db.investorPool = incoming.investorPool;
+        save(); alert('Merged with de-dup. Reloading…'); location.reload();
+      }catch(e){ alert('Invalid file'); }
+    });
+  };
+  window.exportAllCSV = function(){
+    function csv(rows){ return rows.map(function(r){ return Object.values(r).map(function(v){ return '"'+String(v).replace(/"/g,'""')+'"'; }).join(','); }).join('\n'); }
+    function dl(n,rows){ var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv(rows)],{type:'text/csv'})); a.download=n; a.click(); }
+    dl('vehicles.csv', db.vehicles||[]);
+    dl('vehicle_expenses.csv', db.vehicleExpenses||[]);
+    dl('showroom_expenses.csv', db.showroomExpenses||[]);
+    dl('sales.csv', db.sales||[]);
+    dl('todo.csv', db.todo||[]);
+    dl('directors.csv', (db.partners||[]).map(function(p){ return {name:p.name,balance:p.balance,txCount:(p.tx||[]).length}; }));
+    dl('investors.csv', (db.investors||[]).map(function(i){ return {name:i.name,balance:i.balance,txCount:(i.tx||[]).length}; }));
+  };
+
+  // Calculations
+  function saleProfitParts(sale){
+    var v=db.vehicles.find(function(x){return x.id===sale.vehicleId;});
+    var exp=db.vehicleExpenses.filter(function(e){return e.vehicleId===sale.vehicleId;}).reduce(function(t,x){return t+Number(x.amount||0);},0);
+    var base = Number(sale.salePrice||0) - Number(v&&v.purchase||0) - exp;
+    var investorFee = (v && v.ownerType==='investor') ? 175 : 0;
+    var afterFee = base - investorFee;
+    var investorShare = (v && v.ownerType==='investor') ? Math.max(0, afterFee*0.20) : 0;
+    var yourProfit = afterFee - investorShare;
+    return {purchase:Number(v&&v.purchase||0), expenses:exp, baseProfit:base, investorFee:investorFee, investorShare:investorShare, yourProfit:yourProfit};
+  }
+
+  // Gist Sync
+  function gistPush(){
+    var id=(db.integrations&&db.integrations.gistId)||'';
+    var tok=(db.integrations&&db.integrations.gistToken)||'';
+    if(!id||!tok){ alert('Set Gist ID and Token in Settings'); return; }
+    var body = { files: { 'starcars.json': { content: JSON.stringify(db) } } };
+    fetch('https://api.github.com/gists/'+id, {method:'PATCH', headers:{'Authorization':'token '+tok,'Content-Type':'application/json'}, body: JSON.stringify(body)})
+      .then(function(r){ if(r.ok){ alert('Synced to GitHub Gist'); } else { alert('Gist push failed'); } });
+  }
+  function gistPull(){
+    var id=(db.integrations&&db.integrations.gistId)||'';
+    var tok=(db.integrations&&db.integrations.gistToken)||'';
+    if(!id||!tok){ alert('Set Gist ID and Token in Settings'); return; }
+    fetch('https://api.github.com/gists/'+id, {headers:{'Authorization':'token '+tok}})
+      .then(function(r){ if(!r.ok) throw new Error('Fetch failed'); return r.json(); })
+      .then(function(data){ var f=data.files && data.files['starcars.json']; if(!f||!f.content) throw new Error('No starcars.json'); db=JSON.parse(f.content); save(); alert('Pulled. Reloading…'); location.reload(); })
+      .catch(function(){ alert('Gist fetch failed'); });
+  }
+  window.gistPush=gistPush; window.gistPull=gistPull;
+
+  // UI
+  var TABS=['Dashboard','Vehicles','Expenses','Showroom','Sales','To-Do','Directors','Investors','Finance Proforma','Reports','Settings','Users'];
+  var currentTab='Sales';
+
+  function regDataListHTML(id){ var s='<datalist id="'+id+'">'; db.vehicles.forEach(function(v){ s+='<option value="'+(v.reg||'')+'">'+(v.make||'')+' '+(v.model||'')+'</option>'; }); return s+'</datalist>'; }
+  function renderHeaderLogo(){
+    var lb=document.getElementById('logoBox');
+    if(db.logo){ lb.innerHTML='<img src="'+db.logo+'">'; } else { lb.textContent='SC'; }
+    document.getElementById('who').textContent = session?('Logged in as '+session.username):'';
+  }
+  function renderNav(){
+    var nav=document.getElementById('nav'); nav.innerHTML='';
+    TABS.forEach(function(t){
+      if(!canView(t)) return;
+      var b=document.createElement('button'); b.textContent=t; if(t===currentTab) b.className='active';
+      b.onclick=function(){ currentTab=t; render(); };
+      nav.appendChild(b);
+    });
+  }
+
+  function viewDashboard(){
+    var card=document.createElement('div'); card.className='card';
+    var html='<h2>Dashboard</h2>';
+    html+='<div class="row"><input id="dash_reg" placeholder="Start typing reg…" list="regList_dash">'+regDataListHTML('regList_dash')+' <button id="dash_show">Show</button> <span class="small">Dropdown shows matching regs while you type</span></div>';
+    html+='<div id="dash_result"></div>';
+    var inStock=db.vehicles.filter(function(v){ return v.status!=='sold'; }).length;
+    var soldCount=db.sales.length;
+    html+='<div class="kpi">';
+    html+='<div class="card"><div class="small">In Stock</div><div style="font-weight:700;font-size:20px">'+inStock+'</div></div>';
+    html+='<div class="card"><div class="small">Sold (all time)</div><div style="font-weight:700;font-size:20px)">'+soldCount+'</div></div>';
+    html+='</div>';
+    card.innerHTML = html;
+
+    card.querySelector('#dash_show').onclick=function(){
+      var reg=(card.querySelector('#dash_reg').value||'').toUpperCase().trim();
+      var v=db.vehicles.find(function(x){return x.reg===reg;});
+      var out=card.querySelector('#dash_result');
+      if(!v){ out.innerHTML='<div class="card">No vehicle found for <b>'+(reg||'-')+'</b></div>'; return; }
+      var vexp=db.vehicleExpenses.filter(function(e){ return e.vehicleId===v.id; });
+      var expTot=vexp.reduce(function(t,x){ return t+Number(x.amount||0); },0);
+      var total=Number(v.purchase||0)+expTot;
+      var s='<div class="card"><h3>'+v.reg+' — '+(v.make||'')+' '+(v.model||'')+'</h3>';
+      s+='<div class="kpi">';
+      s+='<div class="card"><div class="small">Purchase</div><div style="font-weight:700;font-size:18px">'+fmtMoney(v.purchase||0)+'</div></div>';
+      s+='<div class="card"><div class="small">Expenses</div><div style="font-weight:700;font-size:18px)">'+fmtMoney(expTot)+'</div></div>';
+      s+='<div class="card"><div class="small">Total Cost</div><div style="font-weight:700;font-size:18px)">'+fmtMoney(total)+'</div></div>';
+      s+='<div class="card"><div class="small">Status</div><div class="badge)">'+(v.status||'for sale')+'</div></div>';
+      s+='</div>';
+      s+='<div style="margin-top:8px"><table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th></tr></thead><tbody>';
+      vexp.forEach(function(e){ s+='<tr><td>'+ddmmyyyy(e.date)+'</td><td>'+ (e.type||'') +'</td><td class="right">'+fmtMoney(e.amount)+'</td><td>'+ (e.note||'') +'</td></tr>'; });
+      s+='</tbody></table></div></div>';
+      out.innerHTML=s;
+    };
+    return card;
+  }
+
+  function viewVehicles(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Vehicles</h2>';
+    h+='<div class="grid2">';
+    h+='<input id="v_reg" placeholder="Reg">';
+    h+='<button id="v_dvla" class="no-print">DVLA Lookup</button>';
+    h+='<input id="v_make" placeholder="Make">';
+    h+='<input id="v_model" placeholder="Model">';
+    h+='<input id="v_vin" placeholder="VIN">';
+    h+='<input id="v_colour" placeholder="Colour">';
+    h+='<input id="v_mileage" type="number" placeholder="Mileage">';
+    h+='<select id="v_fuel"><option value="">Fuel</option><option>Petrol</option><option>Diesel</option><option>Hybrid</option><option>Electric</option></select>';
+    h+='<select id="v_ownerType"><option value="owned">Owned</option><option value="investor">Investor</option></select>';
+    h+='<input id="v_investor" placeholder="Investor name (match Investors tab)">';
+    h+='<input id="v_purchase" type="number" step="0.01" placeholder="Purchase £">';
+    h+='<input id="v_supplier" placeholder="Supplier invoice #">';
+    h+='<select id="v_status"><option>for sale</option><option>sold</option><option>returned</option><option>auction</option></select>';
+    h+='<label>Photos <input id="v_photos" type="file" accept="image/*" multiple></label>';
+    h+='<label>Docs <input id="v_docs" type="file" multiple></label>';
+    h+='<button id="v_add">Add / Update</button>';
+    h+='<input id="veh_search" placeholder="Search reg/make/model" style="min-width:260px">';
+    h+='</div>';
+    h+='<div id="v_media" class="small" style="margin-top:8px"></div>';
+    h+='<table class="table" style="margin-top:8px"><thead><tr><th>Reg</th><th>Make</th><th>Model</th><th>Mileage</th><th>Fuel</th><th>Type</th><th>Investor</th><th class="right">Purchase</th><th>Status</th><th></th></tr></thead><tbody id="vehBody"></tbody></table>';
+    wrap.innerHTML=h;
+
+    var editId=null; var body=wrap.querySelector('#vehBody'); var mediaBox=wrap.querySelector('#v_media');
+
+    function showMedia(item){
+      var s=''; var imgs=(item.photos||[]); var docs=(item.docs||[]);
+      if(imgs.length){ s+='<div><b>Photos:</b> '; imgs.forEach(function(im){ s+='<img class="media-thumb" src="'+im.data+'" alt="'+im.name+'">'; }); s+='</div>'; }
+      if(docs.length){ s+='<div style="margin-top:6px"><b>Docs:</b> '; docs.forEach(function(dc){ s+='<a href="'+dc.data+'" download="'+dc.name+'">'+dc.name+'</a> '; }); s+='</div>'; }
+      if(!s) s='<span class="small">No media for this vehicle.</span>';
+      mediaBox.innerHTML=s;
+    }
+
+    function rows(){
+      body.innerHTML='';
+      db.vehicles.forEach(function(v){
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+v.reg+'</td><td>'+ (v.make||'') +'</td><td>'+ (v.model||'') +'</td><td>'+ (v.mileage||'') +'</td><td>'+ (v.fuel||'') +'</td><td>'+ (v.ownerType||'owned') +'</td><td>'+ (v.investor||'') +'</td><td class="right">'+fmtMoney(v.purchase||0)+'</td><td>'+ (v.status||'') +'</td><td class="right"><button class="small" data-id="'+v.id+'" data-act="edit">Edit</button> <button class="small" data-id="'+v.id+'" data-act="del">Delete</button></td>';
+        body.appendChild(tr);
+      });
+    }
+    rows();
+
+    wrap.querySelector('#veh_search').addEventListener('input', function(e){
+      var q=(e.target.value||'').toLowerCase();
+      body.querySelectorAll('tr').forEach(function(tr){ tr.style.display = tr.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none'; });
+    });
+
+    function readFiles(input, cb){
+      var files = input.files || []; var out=[]; var done=0;
+      if(!files.length) return cb([]);
+      for(var i=0;i<files.length;i++){
+        (function(f){
+          var r=new FileReader();
+          r.onload=function(){ out.push({name:f.name, data:r.result}); done++; if(done===files.length) cb(out); };
+          r.readAsDataURL(f);
+        })(files[i]);
+      }
+    }
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return;
+      var id=b.dataset.id, act=b.dataset.act;
+      if(act==='edit'){
+        var v=db.vehicles.find(function(x){return x.id===id;}); if(!v) return; editId=id;
+        wrap.querySelector('#v_reg').value=v.reg||'';
+        wrap.querySelector('#v_make').value=v.make||'';
+        wrap.querySelector('#v_model').value=v.model||'';
+        wrap.querySelector('#v_vin').value=v.vin||'';
+        wrap.querySelector('#v_colour').value=v.colour||'';
+        wrap.querySelector('#v_mileage').value=v.mileage||'';
+        wrap.querySelector('#v_fuel').value=v.fuel||'';
+        wrap.querySelector('#v_ownerType').value=v.ownerType||'owned';
+        wrap.querySelector('#v_investor').value=v.investor||'';
+        wrap.querySelector('#v_purchase').value=v.purchase||0;
+        wrap.querySelector('#v_supplier').value=v.supplier||'';
+        wrap.querySelector('#v_status').value=v.status||'for sale';
+        showMedia(v);
+      } else if(act==='del'){
+        if(!confirm('Delete vehicle?')) return;
+        db.vehicles = db.vehicles.filter(function(x){ return x.id!==id; });
+        db.vehicleExpenses = db.vehicleExpenses.filter(function(e){ return e.vehicleId!==id; });
+        save(); rows(); mediaBox.innerHTML='';
+      }
+    });
+
+    function dvlaLookup(){
+      var reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim();
+      if(!reg){ alert('Enter a reg first'); return; }
+      var key=(db.integrations&&db.integrations.dvlaApiKey)||'';
+      var proxy=(db.integrations&&db.integrations.dvlaProxy)||'';
+      if(!key || !proxy){
+        alert('Set DVLA key and Proxy URL in Settings. Using demo fill.');
+        wrap.querySelector('#v_make').value='Make';
+        wrap.querySelector('#v_model').value='Model';
+        wrap.querySelector('#v_fuel').value='Petrol';
+        return;
+      }
+      fetch(proxy, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({reg:reg, apiKey:key})})
+        .then(function(r){ if(!r.ok) throw new Error('Lookup failed'); return r.json(); })
+        .then(function(d){ wrap.querySelector('#v_make').value=d.make||''; wrap.querySelector('#v_model').value=d.model||''; wrap.querySelector('#v_fuel').value=d.fuel||''; if(d.vin) wrap.querySelector('#v_vin').value=d.vin; if(d.mileage) wrap.querySelector('#v_mileage').value=d.mileage; if(d.colour) wrap.querySelector('#v_colour').value=d.colour; })
+        .catch(function(){ alert('DVLA lookup error'); });
+    }
+    wrap.querySelector('#v_dvla').onclick=dvlaLookup;
+
+    wrap.querySelector('#v_add').onclick=function(){
+      var reg=(wrap.querySelector('#v_reg').value||'').toUpperCase().trim();
+      if(!reg){ alert('Reg is required'); return; }
+      var dupe=db.vehicles.find(function(x){return x.reg===reg && x.id!==editId;});
+      if(dupe){ alert('Duplicate reg exists'); return; }
+
+      var v = {
+        id: editId || uid(),
+        reg: reg,
+        make: wrap.querySelector('#v_make').value.trim(),
+        model: wrap.querySelector('#v_model').value.trim(),
+        vin: wrap.querySelector('#v_vin').value.trim(),
+        colour: wrap.querySelector('#v_colour').value.trim(),
+        mileage: Number(wrap.querySelector('#v_mileage').value||0),
+        fuel: wrap.querySelector('#v_fuel').value,
+        ownerType: wrap.querySelector('#v_ownerType').value,
+        investor: wrap.querySelector('#v_investor').value.trim(),
+        purchase: Number(wrap.querySelector('#v_purchase').value||0),
+        supplier: wrap.querySelector('#v_supplier').value.trim(),
+        status: wrap.querySelector('#v_status').value,
+        photos: [],
+        docs: []
+      };
+
+      function finalizeSave(withMedia){
+        if(editId){
+          var old=db.vehicles.find(function(x){return x.id===editId;});
+          if(withMedia){
+            v.photos = v.photos.concat(old.photos||[]);
+            v.docs   = v.docs.concat(old.docs||[]);
+          } else {
+            v.photos = old.photos||[];
+            v.docs   = old.docs||[];
+          }
+          db.vehicles = db.vehicles.map(function(x){ return x.id===editId ? v : x; });
+          editId=null;
+        } else {
+          db.vehicles.unshift(v);
+        }
+        save(); rows(); showMedia(v);
+        ['v_reg','v_make','v_model','v_vin','v_colour','v_mileage','v_investor','v_purchase','v_supplier'].forEach(function(id){ var el=wrap.querySelector('#'+id); if(el) el.value=''; });
+      }
+
+      var photosEl=wrap.querySelector('#v_photos');
+      var docsEl=wrap.querySelector('#v_docs');
+      if((photosEl.files&&photosEl.files.length) || (docsEl.files&&docsEl.files.length)){
+        function readFiles(input, cb){
+          var files = input.files || []; var out=[]; var done=0;
+          if(!files.length) return cb([]);
+          for(var i=0;i<files.length;i++){
+            (function(f){
+              var r=new FileReader();
+              r.onload=function(){ out.push({name:f.name, data:r.result}); done++; if(done===files.length) cb(out); };
+              r.readAsDataURL(f);
+            })(files[i]);
+          }
+        }
+        readFiles(photosEl, function(imgs){
+          v.photos = imgs;
+          readFiles(docsEl, function(dcs){
+            v.docs = dcs;
+            finalizeSave(true);
+            photosEl.value=''; docsEl.value='';
+          });
+        });
+      } else {
+        finalizeSave(false);
+      }
+    };
+
+    return wrap;
+  }
+
+  function viewExpenses(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Expenses (per vehicle)</h2>';
+    h+='<div class="row">';
+    h+='<input id="e_reg" placeholder="Start typing reg…" list="regList2">'+regDataListHTML('regList2');
+    h+='<select id="e_vehicle"><option value="">Or select vehicle…</option>';
+    db.vehicles.forEach(function(v){ h+='<option value="'+v.id+'">'+v.reg+' — '+(v.make||'')+' '+(v.model||'')+'</option>'; });
+    h+='</select>';
+    h+='<input id="e_date" type="date" value="'+todayISO()+'">';
+    h+='<input id="e_type" placeholder="Type (MOT/Repairs/Delivery/Adv/Fuel...)">';
+    h+='<input id="e_amt" type="number" step="0.01" placeholder="Amount">';
+    h+='<input id="e_note" placeholder="Note">';
+    h+='<button id="e_add">Add</button>';
+    h+='<input id="e_search" placeholder="Search by reg to total" list="regList2" style="margin-left:auto">';
+    h+='</div>';
+    h+='<table class="table"><thead><tr><th>Reg</th><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th><th></th></tr></thead><tbody id="e_body"></tbody></table>';
+    wrap.innerHTML=h;
+
+    var ebody=wrap.querySelector('#e_body'); var editId=null;
+
+    function rows(list){
+      ebody.innerHTML='';
+      (list||db.vehicleExpenses).forEach(function(e){
+        var v=db.vehicles.find(function(x){return x.id===e.vehicleId;})||{};
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+ (v.reg||'') +'</td><td>'+ddmmyyyy(e.date)+'</td><td>'+ (e.type||'') +'</td><td class="right">'+fmtMoney(e.amount)+'</td><td>'+ (e.note||'') +'</td><td class="right"><button class="small" data-id="'+e.id+'" data-act="edit">Edit</button> <button class="small" data-id="'+e.id+'" data-act="del">Delete</button></td>';
+        ebody.appendChild(tr);
+      });
+    }
+    rows();
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return;
+      var id=b.dataset.id;
+      if(b.dataset.act==='del'){
+        if(!confirm('Delete expense?')) return;
+        db.vehicleExpenses = db.vehicleExpenses.filter(function(x){ return x.id!==id; });
+        save(); rows();
+      } else if(b.dataset.act==='edit'){
+        var e=db.vehicleExpenses.find(function(x){return x.id===id;}); if(!e) return;
+        editId=id;
+        var v=db.vehicles.find(function(x){return x.id===e.vehicleId;});
+        wrap.querySelector('#e_reg').value=(v&&v.reg)||'';
+        wrap.querySelector('#e_vehicle').value=e.vehicleId;
+        wrap.querySelector('#e_date').value=e.date;
+        wrap.querySelector('#e_type').value=e.type||'';
+        wrap.querySelector('#e_amt').value=e.amount||0;
+        wrap.querySelector('#e_note').value=e.note||'';
+      }
+    });
+
+    function bindRegToSelect(inputId, selectId){
+      var iEl=wrap.querySelector(inputId), sEl=wrap.querySelector(selectId);
+      iEl.addEventListener('input', function(){
+        var reg=(iEl.value||'').toUpperCase(); var v=db.vehicles.find(function(x){return x.reg===reg;});
+        if(v) sEl.value=v.id;
+      });
+    }
+    bindRegToSelect('#e_reg', '#e_vehicle');
+
+    wrap.querySelector('#e_add').onclick=function(){
+      var vid=wrap.querySelector('#e_vehicle').value;
+      var reg=(wrap.querySelector('#e_reg').value||'').toUpperCase().trim();
+      if(!vid && reg){
+        var vm=db.vehicles.find(function(x){return x.reg===reg;}); if(vm) vid=vm.id;
+      }
+      if(!vid){ alert('Pick a vehicle (or type reg)'); return; }
+      var e={ id: editId||uid(), vehicleId:vid, date:wrap.querySelector('#e_date').value, type:wrap.querySelector('#e_type').value.trim(), amount:Number(wrap.querySelector('#e_amt').value||0), note:wrap.querySelector('#e_note').value.trim() };
+      if(editId){ db.vehicleExpenses = db.vehicleExpenses.map(function(x){ return x.id===editId ? e : x; }); editId=null; }
+      else { db.vehicleExpenses.unshift(e); }
+      save(); rows();
+      wrap.querySelector('#e_type').value=''; wrap.querySelector('#e_amt').value=''; wrap.querySelector('#e_note').value='';
+    };
+
+    function searchHandler(val){
+      var q=(val||'').toUpperCase().trim();
+      if(!q){ rows(); return; }
+      var vids=db.vehicles.filter(function(v){ return (v.reg||'').indexOf(q)>=0; }).map(function(v){ return v.id; });
+      var filtered=db.vehicleExpenses.filter(function(x){ return vids.indexOf(x.vehicleId)>=0; });
+      rows(filtered);
+      var tot = filtered.reduce(function(t,x){ return t+Number(x.amount||0); },0);
+      var tr=document.createElement('tr');
+      tr.innerHTML='<td colspan="3"><b>Total for '+q+'</b></td><td class="right"><b>'+fmtMoney(tot)+'</b></td><td></td><td></td>';
+      ebody.appendChild(tr);
+    }
+    wrap.querySelector('#e_search').addEventListener('input', function(e){ searchHandler(e.target.value); });
+
+    return wrap;
+  }
+
+  function viewShowroom(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Showroom Expenses</h2>';
+    h+='<div class="row"><input id="s_date" type="date" value="'+todayISO()+'"><input id="s_type" placeholder="Type (Rent/Wages/Web/Insurance...)"><input id="s_amt" type="number" step="0.01" placeholder="Amount"><input id="s_note" placeholder="Note"><button id="s_add">Add</button></div>';
+    h+='<table class="table"><thead><tr><th>Date</th><th>Type</th><th class="right">Amount</th><th>Note</th><th></th></tr></thead><tbody id="s_body"></tbody></table>';
+    wrap.innerHTML=h;
+
+    var body=wrap.querySelector('#s_body'); var editId=null;
+    function rows(){
+      body.innerHTML='';
+      db.showroomExpenses.forEach(function(e){
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+ddmmyyyy(e.date)+'</td><td>'+ (e.type||'') +'</td><td class="right">'+fmtMoney(e.amount)+'</td><td>'+ (e.note||'') +'</td><td class="right"><button class="small" data-id="'+e.id+'" data-act="edit">Edit</button> <button class="small" data-id="'+e.id+'" data-act="del">Delete</button></td>';
+        body.appendChild(tr);
+      });
+    }
+    rows();
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return; var id=b.dataset.id;
+      if(b.dataset.act==='del'){
+        if(!confirm('Delete entry?')) return;
+        db.showroomExpenses = db.showroomExpenses.filter(function(x){ return x.id!==id; });
+        save(); rows();
+      } else if(b.dataset.act==='edit'){
+        var e=db.showroomExpenses.find(function(x){return x.id===id;}); if(!e) return; editId=id;
+        wrap.querySelector('#s_date').value=e.date; wrap.querySelector('#s_type').value=e.type||''; wrap.querySelector('#s_amt').value=e.amount||0; wrap.querySelector('#s_note').value=e.note||'';
+      }
+    });
+
+    wrap.querySelector('#s_add').onclick=function(){
+      var e={id:editId||uid(), date:wrap.querySelector('#s_date').value, type:wrap.querySelector('#s_type').value, amount:Number(wrap.querySelector('#s_amt').value||0), note:wrap.querySelector('#s_note').value};
+      if(editId){ db.showroomExpenses = db.showroomExpenses.map(function(x){ return x.id===editId ? e : x; }); editId=null; }
+      else { db.showroomExpenses.unshift(e); }
+      save(); rows(); wrap.querySelector('#s_type').value=''; wrap.querySelector('#s_amt').value=''; wrap.querySelector('#s_note').value='';
+    };
+
+    return wrap;
+  }
+
+  function viewSales(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Sales</h2>';
+    h+='<div class="row">';
+    h+='<input id="sale_reg" placeholder="Start typing reg…" list="regList3">'+regDataListHTML('regList3');
+    h+='<select id="sale_vid"><option value="">Or select vehicle...</option>';
+    db.vehicles.forEach(function(v){ h+='<option value="'+v.id+'">'+v.reg+' — '+(v.make||'')+' '+(v.model||'')+'</option>'; });
+    h+='</select>';
+    h+='<input id="sale_date" type="date" value="'+todayISO()+'">';
+    h+='<input id="sale_invno" placeholder="Invoice # (auto if blank)">';
+    h+='<input id="sale_buyer" placeholder="Customer name">';
+    h+='<input id="sale_addr" placeholder="Customer address">';
+    h+='<input id="sale_phone" placeholder="Phone">';
+    h+='<input id="sale_email" placeholder="Email">';
+    h+='<input id="sale_price" type="number" step="0.01" placeholder="Sale price">';
+    h+='<input id="sale_deposit" type="number" step="0.01" placeholder="Deposit">';
+    h+='<input id="sale_cash" type="number" step="0.01" placeholder="Cash">';
+    h+='<input id="sale_card" type="number" step="0.01" placeholder="Card">';
+    h+='<input id="sale_bank" type="number" step="0.01" placeholder="Bank transfer">';
+    h+='<input id="sale_fin" type="number" step="0.01" placeholder="Finance">';
+    h+='<span id="sale_diff" class="small"></span>';
+    h+='<input id="sale_partex" placeholder="Part-ex details (optional)">';
+    h+='<button id="sale_add">Record / Update</button>';
+    h+='</div>';
+    h+='<table class="table"><thead><tr><th>Date</th><th>Inv #</th><th>Reg</th><th>Customer</th><th class="right">Price</th><th>Breakdown</th><th class="right">Your Profit</th><th class="right">Investor Profit</th><th></th></tr></thead><tbody id="sale_body"></tbody></table>';
+    wrap.innerHTML=h;
+
+    wrap.querySelector('#sale_reg').addEventListener('input', function(e){
+      var reg=(e.target.value||'').toUpperCase(); var v=db.vehicles.find(function(x){return x.reg===reg;});
+      if(v) wrap.querySelector('#sale_vid').value=v.id;
+    });
+
+    var editId=null; var body=wrap.querySelector('#sale_body');
+    function rows(){
+      body.innerHTML='';
+      db.sales.forEach(function(s){
+        var v=db.vehicles.find(function(x){return x.id===s.vehicleId;})||{};
+        var pp=saleProfitParts(s);
+        var br='Dep '+fmtMoney(s.deposit||0)+' • '+fmtMoney(s.cash||0)+' cash, '+fmtMoney(s.card||0)+' card, '+fmtMoney(s.bank||0)+' bank, '+fmtMoney(s.finance||0)+' finance'+((v&&v.ownerType==='investor')?' • Fee £175':'')+((v&&v.ownerType==='investor'&&v.investor)?(' • Investor: '+v.investor):'');
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+ddmmyyyy(s.date)+'</td><td>'+(s.invNo||'')+'</td><td>'+ (v.reg||'') +'</td><td>'+ (s.buyer||'') +'</td><td class="right">'+fmtMoney(s.salePrice)+'</td><td>'+br+'</td><td class="right">'+fmtMoney(pp.yourProfit)+'</td><td class="right">'+fmtMoney(pp.investorShare)+'</td><td class="right"><button class="small" data-id="'+s.id+'" data-act="inv">Invoice</button> <button class="small" data-id="'+s.id+'" data-act="edit">Edit</button> <button class="small" data-id="'+s.id+'" data-act="del">Delete</button></td>';
+        body.appendChild(tr);
+      });
+    }
+    rows();
+
+    function paymentSum(){ function g(id){ return Number(wrap.querySelector(id).value||0); } return g('#sale_deposit')+g('#sale_cash')+g('#sale_card')+g('#sale_bank')+g('#sale_fin'); }
+    function refreshDiff(autoFinance){
+      var priceEl=wrap.querySelector('#sale_price'); var price=Number(priceEl.value||0);
+      var sum=paymentSum(); var diff=price-sum; var lbl=wrap.querySelector('#sale_diff');
+      if(!price){ if(sum){ priceEl.value=sum.toFixed(2); lbl.textContent='Price auto = payments ('+sum.toFixed(2)+')'; lbl.className='small ok'; } else { lbl.textContent=''; } return; }
+      if(diff>0 && autoFinance){
+        var finEl=wrap.querySelector('#sale_fin'); var others=sum-Number(finEl.value||0); finEl.value=Math.max(0, price-others).toFixed(2);
+      }
+      var newSum=paymentSum(); var newDiff=price-newSum;
+      if(Math.abs(newDiff)<0.01){ lbl.textContent='OK: payments match price'; lbl.className='small ok'; }
+      else if(newDiff>0){ lbl.textContent='Remaining to allocate: £'+newDiff.toFixed(2)+' (auto-filled finance)'; lbl.className='small warn'; }
+      else { lbl.textContent='Over by £'+Math.abs(newDiff).toFixed(2); lbl.className='small warn'; }
+    }
+    ['#sale_price','#sale_deposit','#sale_cash','#sale_card','#sale_bank','#sale_fin'].forEach(function(sel){ wrap.querySelector(sel).addEventListener('input', function(){ refreshDiff(true); }); });
+    refreshDiff(true);
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return;
+      var s=db.sales.find(function(x){return x.id===b.dataset.id;});
+      if(b.dataset.act==='del'){
+        if(!confirm('Delete sale? Vehicle will go back to stock.')) return;
+        if(s){ var v=db.vehicles.find(function(x){return x.id===s.vehicleId;}); if(v) v.status='for sale'; db.sales=db.sales.filter(function(x){ return x.id!==s.id; }); save(); rows(); }
+      } else if(b.dataset.act==='edit'){
+        if(!s) return; editId=s.id;
+        wrap.querySelector('#sale_vid').value=s.vehicleId; wrap.querySelector('#sale_date').value=s.date; wrap.querySelector('#sale_invno').value=s.invNo||''; wrap.querySelector('#sale_buyer').value=s.buyer||''; wrap.querySelector('#sale_addr').value=s.address||''; wrap.querySelector('#sale_phone').value=s.phone||''; wrap.querySelector('#sale_email').value=s.email||''; wrap.querySelector('#sale_price').value=s.salePrice||''; wrap.querySelector('#sale_deposit').value=s.deposit||0; wrap.querySelector('#sale_cash').value=s.cash||0; wrap.querySelector('#sale_card').value=s.card||0; wrap.querySelector('#sale_bank').value=s.bank||0; wrap.querySelector('#sale_fin').value=s.finance||0; wrap.querySelector('#sale_partex').value=s.partex||''; refreshDiff(false);
+      } else if(b.dataset.act==='inv'){
+        if(!s) return; printInvoice(s.id);
+      }
+    });
+
+    wrap.querySelector('#sale_add').onclick=function(){
+      var vid=wrap.querySelector('#sale_vid').value; if(!vid) return alert('Pick a vehicle');
+      var price=Number(wrap.querySelector('#sale_price').value||0);
+      var inv=(wrap.querySelector('#sale_invno').value||'').trim();
+      db.counters=db.counters||{invPrefix:'SC', nextInv:1};
+      if(!inv){ var p=(db.counters.invPrefix||'SC'); var n=String(db.counters.nextInv||1).padStart(4,'0'); inv=p+n; db.counters.nextInv=(db.counters.nextInv||1)+1; }
+      var s={ id: editId||uid(), vehicleId: vid, date: wrap.querySelector('#sale_date').value, invNo: inv, buyer: wrap.querySelector('#sale_buyer').value.trim(), address: wrap.querySelector('#sale_addr').value.trim(), phone: wrap.querySelector('#sale_phone').value.trim(), email: wrap.querySelector('#sale_email').value.trim(), salePrice: price, deposit: Number(wrap.querySelector('#sale_deposit').value||0), cash: Number(wrap.querySelector('#sale_cash').value||0), card: Number(wrap.querySelector('#sale_card').value||0), bank: Number(wrap.querySelector('#sale_bank').value||0), finance: Number(wrap.querySelector('#sale_fin').value||0), partex: wrap.querySelector('#sale_partex').value.trim() };
+      var paid=s.deposit+s.cash+s.card+s.bank+s.finance;
+      if(Math.abs(price-paid)>0.01){
+        if(price===0){ s.salePrice=paid; } else { var others=paid-s.finance; s.finance=Math.max(0, s.salePrice-others); }
+      }
+      if(editId){ db.sales = db.sales.map(function(x){ return x.id===editId ? s : x; }); editId=null; }
+      else { db.sales.unshift(s); var v=db.vehicles.find(function(x){return x.id===vid;}); if(v) v.status='sold'; }
+      save(); rows();
+    };
+
+    return wrap;
+  }
+
+  function printInvoice(saleId){
+    var s=db.sales.find(function(x){return x.id===saleId;}); if(!s) return;
+    var v=db.vehicles.find(function(x){return x.id===s.vehicleId;})||{};
+    var co=db.company||{};
+    var price = function(n){ return '£'+Number(n||0).toFixed(2); };
+    var ddmy = function(iso){ return (iso||'').split('-').reverse().join('/'); };
+    var nowTime = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+
+    var logoHTML = db.logo ? '<img src="'+db.logo+'" style="max-height:90px;max-width:320px;object-fit:contain">' : '<div style="font-size:26px;font-weight:800">STARCARSLONDON</div><div style="font-size:12px)">'+(co.website||'')+'</div>';
+    var headerRight = '<div><b>'+ (co.name||'Star Cars London Ltd') +'</b></div>' +
+                      '<div>'+ (co.address||'') +'</div>' +
+                      '<div>P: '+ (co.phone||'') + (co.email?(' • '+co.email):'') +'</div>' +
+                      '<div>COMPANY #: '+ (co.companyNumber||'') +' &nbsp; VAT # '+ (co.vatNumber||'') +'</div>';
+
+    var html='<!doctype html><html><head><meta charset="utf-8"><title>Sales Invoice</title><style>@page{size:A4;margin:12mm 14mm} body{font-family:Arial,Helvetica,sans-serif;color:#111}.sheet{width:730px;margin:0 auto}.head{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;border-bottom:2px solid #000;padding-bottom:10px}.logo{text-align:left}.co{text-align:right;font-size:12px;line-height:1.5}h1.title{text-align:center;margin:10px 0 12px;font-size:22px;letter-spacing:0.6px}table.grid{width:100%;border-collapse:collapse}table.grid th,table.grid td{border:1px solid #000;padding:8px 10px;font-size:13px;vertical-align:top}table.grid th{width:180px;background:#f6f6f6;text-align:left}.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}.signs{display:flex;justify-content:space-between;gap:24px;margin-top:24px}.sign{width:48%;border-top:1px solid #000;padding-top:6px;font-size:13px}.tcs{font-size:12px;margin-top:14px;line-height:1.5}.mono{font-family:Consolas,monospace}.right{text-align:right}</style></head><body>';
+    html+='<div class="sheet"><div class="head"><div class="logo">'+logoHTML+'</div><div class="co">'+headerRight+'</div></div>';
+    html+='<h1 class="title">INVOICE</h1>';
+    html+='<div class="row2">';
+    html+='<table class="grid">';
+    html+='<tr><th>NAME</th><td>'+(s.buyer||'')+'</td></tr>';
+    html+='<tr><th>ADD</th><td>'+(s.address||'')+'</td></tr>';
+    html+='<tr><th>DATE OF SALE</th><td class="mono">'+ddmy(s.date)+'</td></tr>';
+    html+='<tr><th>TIME</th><td class="mono">'+nowTime+'</td></tr>';
+    html+='<tr><th>INVOICE #</th><td class="mono">'+(s.invNo||'')+'</td></tr>';
+    html+='</table>';
+    html+='<table class="grid">';
+    html+='<tr><th>MAKE</th><td>'+(v.make||'')+'</td></tr>';
+    html+='<tr><th>MODEL</th><td>'+(v.model||'')+'</td></tr>';
+    html+='<tr><th>COLOUR</th><td>'+(v.colour||'')+'</td></tr>';
+    if(v.vin){ html+='<tr><th>VIN</th><td class="mono)">'+v.vin+'</td></tr>'; }
+    html+='<tr><th>MILEAGE</th><td class="mono)">'+(v.mileage||'')+'</td></tr>';
+    html+='<tr><th>REG</th><td class="mono)">'+(v.reg||'')+'</td></tr>';
+    html+='</table>';
+    html+='</div>';
+    html+='<div class="tcs"><b>Terms & Warranty</b><br>'+String(co.terms||'').replace(/\n/g,'<br>')+'</div>';
+    html+='<table class="grid" style="margin-top:12px">';
+    html+='<tr><th>CASH PRICE</th><td class="right mono)">'+fmtMoney(s.salePrice)+'</td></tr>';
+    html+='<tr><th>DEPOSIT</th><td class="right mono)">'+fmtMoney(s.deposit)+'</td></tr>';
+    html+='<tr><th>CASH</th><td class="right mono)">'+fmtMoney(s.cash)+'</td></tr>';
+    html+='<tr><th>CARD</th><td class="right mono)">'+fmtMoney(s.card)+'</td></tr>';
+    html+='<tr><th>BANK TRANSFER</th><td class="right mono)">'+fmtMoney(s.bank)+'</td></tr>';
+    html+='<tr><th>FINANCE</th><td class="right mono)">'+fmtMoney(s.finance)+'</td></tr>';
+    if(s.partex){ html+='<tr><th>PART EX</th><td class="mono)">'+s.partex+'</td></tr>'; }
+    var totalPaid = Number(s.deposit||0)+Number(s.cash||0)+Number(s.card||0)+Number(s.bank||0)+Number(s.finance||0);
+    html+='<tr><th>TOTAL PAID</th><td class="right mono)">'+fmtMoney(totalPaid)+'</td></tr>';
+    html+='</table>';
+    html+='<div class="signs"><div class="sign">DATE: ____________ &nbsp;&nbsp; CUSTOMER SIGNATURE</div><div class="sign">DATE: ____________ &nbsp;&nbsp; SELLER SIGNATURE</div></div>';
+    html+='</div>'; 
+    html+='</body></html>';
+    var win=window.open('','_blank'); win.document.write(html); win.document.close(); win.onload=function(){ try{ win.print(); }catch(e){} };
+  }
+
+  function viewTodo(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>To-Do</h2>';
+    h+='<div class="row">';
+    h+='<input id="t_reg" placeholder="Reg (type or select)" list="regList_t">'+regDataListHTML('regList_t');
+    h+='<select id="t_vid"><option value="">Or select…</option>'; db.vehicles.forEach(function(v){ h+='<option value="'+v.id+'">'+v.reg+' — '+(v.make||'')+' '+(v.model||'')+'</option>'; }); h+='</select>';
+    h+='<input id="t_task" placeholder="Task (e.g., MOT, valet, photos)">';
+    h+='<input id="t_due" type="date" value="'+todayISO()+'">';
+    h+='<input id="t_who" placeholder="Assigned to">';
+    h+='<select id="t_status"><option value="todo">To do</option><option value="doing">Doing</option><option value="done">Done</option></select>';
+    h+='<button id="t_add">Add / Update</button>';
+    h+='</div>';
+    h+='<table class="table"><thead><tr><th>Reg</th><th>Task</th><th>Due</th><th>Who</th><th>Status</th><th></th></tr></thead><tbody id="t_body"></tbody></table>';
+    wrap.innerHTML=h;
+
+    var body=wrap.querySelector('#t_body'); var editId=null;
+    wrap.querySelector('#t_reg').addEventListener('input', function(e){ var reg=(e.target.value||'').toUpperCase(); var v=db.vehicles.find(function(x){return x.reg===reg;}); if(v) wrap.querySelector('#t_vid').value=v.id; });
+
+    function rows(){
+      body.innerHTML='';
+      db.todo.forEach(function(t){
+        var v=db.vehicles.find(function(x){return x.id===t.vehicleId;})||{};
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+ (v.reg||t.reg||'') +'</td><td>'+ (t.task||'') +'</td><td>'+ddmmyyyy(t.due)+'</td><td>'+ (t.who||'') +'</td><td>'+ (t.status||'') +'</td><td class="right"><button class="small" data-id="'+t.id+'" data-act="edit">Edit</button> <button class="small" data-id="'+t.id+'" data-act="del">Delete</button></td>';
+        body.appendChild(tr);
+      });
+    }
+    rows();
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return; var id=b.dataset.id;
+      if(b.dataset.act==='del'){ db.todo = db.todo.filter(function(x){ return x.id!==id; }); save(); rows(); }
+      else if(b.dataset.act==='edit'){
+        var t=db.todo.find(function(x){return x.id===id;}); if(!t) return; editId=id;
+        var v=db.vehicles.find(function(x){return x.id===t.vehicleId;});
+        wrap.querySelector('#t_reg').value=(v&&v.reg)||t.reg||'';
+        wrap.querySelector('#t_vid').value=t.vehicleId||'';
+        wrap.querySelector('#t_task').value=t.task||'';
+        wrap.querySelector('#t_due').value=t.due||todayISO();
+        wrap.querySelector('#t_who').value=t.who||'';
+        wrap.querySelector('#t_status').value=t.status||'todo';
+      }
+    });
+
+    wrap.querySelector('#t_add').onclick=function(){
+      var reg=(wrap.querySelector('#t_reg').value||'').toUpperCase().trim();
+      var vid=wrap.querySelector('#t_vid').value;
+      if(!vid && reg){ var v=db.vehicles.find(function(x){return x.reg===reg;}); if(v) vid=v.id; }
+      var t={ id: editId||uid(), vehicleId:vid||'', reg:reg, task:wrap.querySelector('#t_task').value.trim(), due:wrap.querySelector('#t_due').value, who:wrap.querySelector('#t_who').value.trim(), status:wrap.querySelector('#t_status').value };
+      if(editId){ db.todo = db.todo.map(function(x){ return x.id===editId ? t : x; }); editId=null; } else { db.todo.unshift(t); }
+      save(); rows();
+      wrap.querySelector('#t_task').value='';
+    };
+
+    return wrap;
+  }
+
+  function viewDirectors(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Directors</h2>';
+    h+='<div class="row small">Track each director investment/withdrawal and post monthly profit split (50/50 of Your Profit minus Showroom).</div>';
+    h+='<div class="row"><input id="d_name1" placeholder="Director 1 name" value="'+(db.partners[0]&&db.partners[0].name||'Director 1')+'"><input id="d_name2" placeholder="Director 2 name" value="'+(db.partners[1]&&db.partners[1].name||'Director 2')+'"><button id="d_saveNames">Save Names</button></div>';
+    h+='<div class="kpi">';
+    (db.partners||[]).forEach(function(p,i){
+      h+='<div class="card"><div class="small">'+(p.name||('Director '+(i+1)))+'</div><div style="font-weight:700;font-size:18px">'+fmtMoney(p.balance||0)+'</div></div>';
+    });
+    h+='</div>';
+    h+='<div class="row"><select id="d_idx"><option value="0">'+(db.partners[0]&&db.partners[0].name||'Director 1')+'</option><option value="1">'+(db.partners[1]&&db.partners[1].name||'Director 2')+'</option></select><input id="d_date" type="date" value="'+todayISO()+'"><select id="d_type"><option value="invest">Invest</option><option value="withdraw">Withdraw</option></select><input id="d_amt" type="number" step="0.01" placeholder="Amount"><input id="d_note" placeholder="Note"><button id="d_add">Add</button></div>';
+    h+='<div class="card"><h3>Monthly Split</h3><div class="row"><input id="ms_month" type="month" value="'+(new Date().toISOString().slice(0,7))+'"><button id="ms_calc">Preview</button><button id="ms_post">Post 50/50</button><span id="ms_out" class="small"></span></div></div>';
+    wrap.innerHTML=h;
+
+    function calcMonthNet(k){
+      var your=0, show=0;
+      db.sales.forEach(function(s){ if(monthKey(s.date)===k){ var pp=saleProfitParts(s); your+=pp.yourProfit; } });
+      db.showroomExpenses.forEach(function(e){ if(monthKey(e.date)===k){ show+=Number(e.amount||0); } });
+      return {your:your, show:show, net: your-show};
+    }
+
+    wrap.querySelector('#d_saveNames').onclick=function(){
+      var n1=wrap.querySelector('#d_name1').value.trim()||'Director 1';
+      var n2=wrap.querySelector('#d_name2').value.trim()||'Director 2';
+      db.partners[0]=db.partners[0]||{name:n1,balance:0,tx:[]}; db.partners[0].name=n1;
+      db.partners[1]=db.partners[1]||{name:n2,balance:0,tx:[]}; db.partners[1].name=n2;
+      save(); alert('Director names saved'); render();
+    };
+
+    wrap.querySelector('#d_add').onclick=function(){
+      var i=Number(wrap.querySelector('#d_idx').value||0);
+      var t={id:uid(), date:wrap.querySelector('#d_date').value, type:wrap.querySelector('#d_type').value, amount:Number(wrap.querySelector('#d_amt').value||0), note:wrap.querySelector('#d_note').value.trim()};
+      db.partners[i]=db.partners[i]||{name:'Director '+(i+1), balance:0, tx:[]};
+      db.partners[i].tx=db.partners[i].tx||[]; db.partners[i].tx.unshift(t);
+      db.partners[i].balance = Number(db.partners[i].balance||0) + (t.type==='invest'?t.amount:-t.amount);
+      save(); alert('Saved'); render();
+    };
+
+    wrap.querySelector('#ms_calc').onclick=function(){
+      var k=wrap.querySelector('#ms_month').value;
+      var r=calcMonthNet(k); wrap.querySelector('#ms_out').textContent='Month '+k+' — Your Gross '+fmtMoney(r.your)+', Showroom '+fmtMoney(r.show)+', Net '+fmtMoney(r.net)+' → each gets '+fmtMoney(r.net/2);
+    };
+    wrap.querySelector('#ms_post').onclick=function(){
+      var k=wrap.querySelector('#ms_month').value;
+      var r=calcMonthNet(k); var each=r.net/2;
+      if(!confirm('Post '+fmtMoney(each)+' to each director for '+k+'?')) return;
+      (db.partners||[]).forEach(function(p, i){
+        p.tx=p.tx||[]; p.tx.unshift({id:uid(),date:k+'-28',type:'profit',amount:each,note:'Monthly split '+k});
+        p.balance=Number(p.balance||0)+each;
+      });
+      save(); alert('Posted'); render();
+    };
+
+    return wrap;
+  }
+
+  function viewInvestors(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Investors</h2>';
+    h+='<div class="row"><input id="i_name" placeholder="Investor name"><button id="i_add">Add investor</button><span class="small">Link vehicles by typing the exact investor name in the Vehicles tab.</span></div>';
+    h+='<div class="row"><select id="i_sel"><option value="">Select investor…</option></select><input id="i_date" type="date" value="'+todayISO()+'"><select id="i_type"><option value="fund_in">Funds In</option><option value="withdraw">Withdraw</option></select><input id="i_amt" type="number" step="0.01" placeholder="Amount"><input id="i_note" placeholder="Note"><button id="i_tx">Add transaction</button></div>';
+    h+='<table class="table"><thead><tr><th>Investor</th><th class="right">Total In</th><th class="right">Total Out</th><th class="right">Balance</th><th class="right">In Use (in-stock purchases)</th><th class="right">Available</th><th>In-Stock Vehicles</th></tr></thead><tbody id="i_body"></tbody></table>';
+    h+='<div id="i_details"></div>';
+    wrap.innerHTML=h;
+
+    function sel() { return wrap.querySelector('#i_sel'); }
+    function refreshSel(){
+      var s=sel(); s.innerHTML='<option value="">Select investor…</option>';
+      (db.investors||[]).forEach(function(inv){ var opt=document.createElement('option'); opt.value=inv.id; opt.textContent=inv.name; s.appendChild(opt); });
+    }
+    function sums(inv){
+      var ins=0, outs=0;
+      (inv.tx||[]).forEach(function(t){ if(t.type==='fund_in') ins+=Number(t.amount||0); else if(t.type==='withdraw') outs+=Number(t.amount||0); });
+      var bal=ins-outs;
+      var inUse = db.vehicles.filter(function(v){ return v.ownerType==='investor' && (v.investor||'').toLowerCase()===(inv.name||'').toLowerCase() && v.status!=='sold'; })
+                             .reduce(function(t,v){ return t+Number(v.purchase||0); },0);
+      var available = bal - inUse;
+      return {in:ins, out:outs, bal:bal, inUse:inUse, avail:available};
+    }
+    function renderList(){
+      var b=wrap.querySelector('#i_body'); b.innerHTML='';
+      (db.investors||[]).forEach(function(inv){
+        var s=sums(inv);
+        var list = db.vehicles.filter(function(v){ return v.ownerType==='investor' && (v.investor||'').toLowerCase()===(inv.name||'').toLowerCase() && v.status!=='sold'; }).map(function(v){ return v.reg; }).join(', ');
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+inv.name+'</td><td class="right">'+fmtMoney(s.in)+'</td><td class="right">'+fmtMoney(s.out)+'</td><td class="right">'+fmtMoney(s.bal)+'</td><td class="right">'+fmtMoney(s.inUse)+'</td><td class="right">'+fmtMoney(s.avail)+'</td><td>'+ (list||'-') +'</td>';
+        b.appendChild(tr);
+      });
+    }
+    function renderDetails(invId){
+      var box=wrap.querySelector('#i_details'); if(!invId){ box.innerHTML=''; return; }
+      var inv=(db.investors||[]).find(function(x){return x.id===invId;}); if(!inv){ box.innerHTML=''; return; }
+      var sold = db.sales.filter(function(s){ var v=db.vehicles.find(function(x){return x.id===s.vehicleId;}); return v && v.ownerType==='investor' && (v.investor||'').toLowerCase()===(inv.name||'').toLowerCase(); });
+      var rows = sold.map(function(s){ var v=db.vehicles.find(function(x){return x.id===s.vehicleId;})||{}; var pp=saleProfitParts(s); return '<tr><td>'+ddmmyyyy(s.date)+'</td><td>'+v.reg+'</td><td>'+ (v.make||'')+' '+(v.model||'') +'</td><td class="right">'+fmtMoney(s.salePrice)+'</td><td class="right">'+fmtMoney(pp.baseProfit - 175)+'</td><td class="right">'+fmtMoney(pp.investorShare)+'</td></tr>'; }).join('');
+      var html='<div class="card"><h3>Sold stock for '+inv.name+'</h3><table class="table"><thead><tr><th>Date</th><th>Reg</th><th>Vehicle</th><th class="right">Sale Price</th><th class="right">Profit (after fee)</th><th class="right">Investor 20%</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+      box.innerHTML=html;
+    }
+
+    refreshSel(); renderList(); renderDetails(null);
+
+    wrap.querySelector('#i_add').onclick=function(){
+      var name=wrap.querySelector('#i_name').value.trim(); if(!name) return alert('Enter a name');
+      if((db.investors||[]).find(function(x){return x.name.toLowerCase()===name.toLowerCase();})) return alert('Investor exists');
+      db.investors.push({id:uid(), name:name, balance:0, tx:[]}); save(); wrap.querySelector('#i_name').value=''; refreshSel(); renderList();
+    };
+    wrap.querySelector('#i_tx').onclick=function(){
+      var id=sel().value; if(!id) return alert('Pick investor');
+      var inv=db.investors.find(function(x){return x.id===id;});
+      var t={id:uid(), date:wrap.querySelector('#i_date').value, type:wrap.querySelector('#i_type').value, amount:Number(wrap.querySelector('#i_amt').value||0), note:wrap.querySelector('#i_note').value.trim()};
+      inv.tx=inv.tx||[]; inv.tx.unshift(t);
+      inv.balance = (inv.balance||0) + (t.type==='fund_in'?t.amount:-t.amount);
+      save(); renderList(); renderDetails(id);
+      wrap.querySelector('#i_amt').value=''; wrap.querySelector('#i_note').value='';
+    };
+    sel().onchange=function(){ renderDetails(sel().value); };
+
+    return wrap;
+  }
+
+  function viewFinanceProforma(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Finance Proforma</h2>';
+    h+='<div class="row">';
+    h+='<input id="fp_reg" placeholder="Start typing reg…" list="regList_fp">'+regDataListHTML('regList_fp');
+    h+='<select id="fp_vid"><option value="">Or select vehicle…</option>'; db.vehicles.forEach(function(v){ h+='<option value="'+v.id+'">'+v.reg+' — '+(v.make||'')+' '+(v.model||'')+'</option>'; }); h+='</select>';
+    h+='<input id="fp_date" type="date" value="'+todayISO()+'">';
+    h+='<input id="fp_deliver" placeholder="Deliver to">';
+    h+='<input id="fp_customer" placeholder="Customer (optional)">';
+    h+='<input id="fp_price" type="number" step="0.01" placeholder="Cash price">';
+    h+='<input id="fp_deposit" type="number" step="0.01" placeholder="Deposit">';
+    h+='<input id="fp_finance" type="number" step="0.01" placeholder="Finance">';
+    h+='<input id="fp_partex" placeholder="Part-ex (optional)">';
+    h+='<button id="fp_print">Print Proforma</button>';
+    h+='</div>';
+    wrap.innerHTML=h;
+    wrap.querySelector('#fp_reg').addEventListener('input', function(e){ var reg=(e.target.value||'').toUpperCase(); var v=db.vehicles.find(function(x){return x.reg===reg;}); if(v) wrap.querySelector('#fp_vid').value=v.id; });
+    wrap.querySelector('#fp_print').onclick=function(){
+      var vid=wrap.querySelector('#fp_vid').value; if(!vid) return alert('Pick a vehicle');
+      window.printFinanceProforma(vid, wrap.querySelector('#fp_deliver').value.trim(), wrap.querySelector('#fp_customer').value.trim(), wrap.querySelector('#fp_date').value, Number(wrap.querySelector('#fp_price').value||0), Number(wrap.querySelector('#fp_deposit').value||0), Number(wrap.querySelector('#fp_finance').value||0), wrap.querySelector('#fp_partex').value.trim());
+    };
+    return wrap;
+  }
+
+  function viewReports(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Reports</h2><div class="small">Monthly totals (includes Net = Your Profit − Showroom). Also shows Sold Count.</div>';
+    h+='<table class="table"><thead><tr><th>Month</th><th class="right">Sold Count</th><th class="right">Sales</th><th class="right">Your Gross</th><th class="right">Investor Share</th><th class="right">Showroom</th><th class="right">Net to You</th></tr></thead><tbody id="r_body"></tbody></table>';
+    wrap.innerHTML=h;
+    var byMonth={};
+    db.sales.forEach(function(s){ var k=monthKey(s.date); if(!byMonth[k]) byMonth[k]={sold:0,sales:0,yourProfit:0,investor:0,showroom:0}; var pp=saleProfitParts(s); byMonth[k].sold+=1; byMonth[k].sales+=Number(s.salePrice||0); byMonth[k].yourProfit+=pp.yourProfit; byMonth[k].investor+=pp.investorShare; });
+    db.showroomExpenses.forEach(function(e){ var k=monthKey(e.date); if(!byMonth[k]) byMonth[k]={sold:0,sales:0,yourProfit:0,investor:0,showroom:0}; byMonth[k].showroom+=Number(e.amount||0); });
+    var months=Object.keys(byMonth).sort();
+    var b=wrap.querySelector('#r_body'); b.innerHTML='';
+    months.forEach(function(k){ var r=byMonth[k]; var net=r.yourProfit - r.showroom; var tr=document.createElement('tr'); tr.innerHTML='<td>'+k+'</td><td class="right">'+r.sold+'</td><td class="right">'+fmtMoney(r.sales)+'</td><td class="right">'+fmtMoney(r.yourProfit)+'</td><td class="right">'+fmtMoney(r.investor)+'</td><td class="right">'+fmtMoney(r.showroom)+'</td><td class="right">'+fmtMoney(net)+'</td>'; b.appendChild(tr); });
+    return wrap;
+  }
+
+  function viewSettings(){
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Settings</h2>';
+    h+='<div class="grid2">';
+    h+='<input id="s_name" placeholder="Company name" value="'+(db.company.name||'')+'">';
+    h+='<input id="s_addr" placeholder="Address" value="'+(db.company.address||'')+'">';
+    h+='<input id="s_phone" placeholder="Phone" value="'+(db.company.phone||'')+'">';
+    h+='<input id="s_email" placeholder="Email" value="'+(db.company.email||'')+'">';
+    h+='<input id="s_web" placeholder="Website" value="'+(db.company.website||'')+'">';
+    h+='<input id="s_vat" placeholder="VAT number" value="'+(db.company.vatNumber||'')+'">';
+    h+='<input id="s_cno" placeholder="Company number" value="'+(db.company.companyNumber||'')+'">';
+    h+='<label>Logo <input id="s_logo" type="file" accept="image/*"></label>';
+    h+='<button id="s_save">Save Company</button>';
+    h+='</div>';
+    h+='<div class="card"><h3>Invoice Terms & Numbering</h3><div class="grid2"><textarea id="s_terms" rows="6" style="width:100%">'+(db.company.terms||'')+'</textarea><div><div class="small">Prefix</div><input id="c_prefix" value="'+(db.counters.invPrefix||'SC')+'"><div class="small">Next #</div><input id="c_next" type="number" value="'+(db.counters.nextInv||1)+'"><button id="c_save">Save Numbering</button></div></div></div>';
+    h+='<div class="card"><h3>VAT</h3><div class="row"><label>Mode <select id="vat_mode"><option value="none"'+(db.vat.mode==='none'?' selected':'')+'>None</option><option value="profit"'+(db.vat.mode==='profit'?' selected':'')+'>On profit</option></select></label><input id="vat_rate" type="number" step="0.1" placeholder="Rate %" value="'+(db.vat.rate||0)+'"><button id="vat_save">Save VAT</button></div></div>';
+    h+='<div class="card"><h3>Integrations</h3><div class="grid2"><input id="s_dvla" placeholder="DVLA API Key" value="'+(db.integrations.dvlaApiKey||'')+'"><input id="s_dvlap" placeholder="DVLA Proxy URL (Cloudflare Worker)" value="'+(db.integrations.dvlaProxy||'')+'"><input id="s_gid" placeholder="GitHub Gist ID" value="'+(db.integrations.gistId||'')+'"><input id="s_gtok" placeholder="GitHub Token (gist scope)" value="'+(db.integrations.gistToken||'')+'"><button id="s_saveInt">Save Integrations</button><button onclick="gistPush()">Sync Now (Push)</button><button onclick="gistPull()">Sync Now (Pull)</button></div></div>';
+    wrap.innerHTML=h;
+
+    wrap.querySelector('#s_save').onclick=function(){ db.company.name=wrap.querySelector('#s_name').value; db.company.address=wrap.querySelector('#s_addr').value; db.company.phone=wrap.querySelector('#s_phone').value; db.company.email=wrap.querySelector('#s_email').value; db.company.website=wrap.querySelector('#s_web').value; db.company.vatNumber=wrap.querySelector('#s_vat').value; db.company.companyNumber=wrap.querySelector('#s_cno').value; db.company.terms=wrap.querySelector('#s_terms').value; save(); alert('Saved'); renderHeaderLogo(); };
+    wrap.querySelector('#s_logo').onchange=function(e){ var f=e.target.files[0]; if(!f) return; var r=new FileReader(); r.onload=function(){ db.logo=r.result; save(); renderHeaderLogo(); alert('Logo saved'); }; r.readAsDataURL(f); };
+    wrap.querySelector('#c_save').onclick=function(){ db.counters.invPrefix=wrap.querySelector('#c_prefix').value||'SC'; db.counters.nextInv=Number(wrap.querySelector('#c_next').value||1); save(); alert('Invoice numbering saved'); };
+    wrap.querySelector('#vat_save').onclick=function(){ db.vat.mode=wrap.querySelector('#vat_mode').value; db.vat.rate=Number(wrap.querySelector('#vat_rate').value||0); save(); alert('VAT settings saved'); };
+    wrap.querySelector('#s_saveInt').onclick=function(){ db.integrations.dvlaApiKey=wrap.querySelector('#s_dvla').value.trim(); db.integrations.dvlaProxy=wrap.querySelector('#s_dvlap').value.trim(); db.integrations.gistId=wrap.querySelector('#s_gid').value.trim(); db.integrations.gistToken=wrap.querySelector('#s_gtok').value.trim(); save(); alert('Integrations saved'); };
+
+    return wrap;
+  }
+
+  function viewUsers(){
+    if(session.role!=='admin'){ var d=document.createElement('div'); d.className='card'; d.textContent='Only admin can manage users.'; return d; }
+    var wrap=document.createElement('div'); wrap.className='card';
+    var h='<h2>Users & Permissions</h2>';
+    h+='<div class="card"><h3>Change Admin Password</h3><div class="row"><input id="pw_user" value="'+session.username+'" disabled><input id="pw_new" type="password" placeholder="New password"><button id="pw_save">Save</button></div></div>';
+    h+='<div class="card"><h3>Add User</h3><div class="row"><input id="u_name" placeholder="Username"><input id="u_pass" placeholder="Password"><select id="u_role"><option value="staff">staff</option><option value="admin">admin</option></select><button id="u_add">Add</button></div></div>';
+    h+='<table class="table"><thead><tr><th>User</th><th>Role</th><th>Permissions (view/edit per tab)</th><th></th></tr></thead><tbody id="u_body"></tbody></table>';
+    wrap.innerHTML=h;
+
+    function permRow(u){
+      var tabs = ['Dashboard','Vehicles','Expenses','Showroom','Sales','To-Do','Directors','Investors','Finance Proforma','Reports','Settings'];
+      var s='<div class="small">';
+      tabs.forEach(function(t){
+        var p=(u.perms&&u.perms[t])||{};
+        s+= '<label style="margin-right:8px">'+t+': <input data-user="'+u.username+'" data-tab="'+t+'" data-k="view" type="checkbox" '+(p.view?'checked':'')+'>view <input data-user="'+u.username+'" data-tab="'+t+'" data-k="edit" type="checkbox" '+(p.edit?'checked':'')+'>edit</label><br>';
+      });
+      s+='</div>'; return s;
+    }
+
+    function rows(){
+      var body=wrap.querySelector('#u_body'); body.innerHTML='';
+      (db.users||[]).forEach(function(u){
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+u.username+'</td><td>'+u.role+'</td><td>'+permRow(u)+'</td><td class="right"><button class="small" data-user="'+u.username+'" data-act="del">Delete</button></td>';
+        body.appendChild(tr);
+      });
+      body.querySelectorAll('input[type="checkbox"]').forEach(function(ch){
+        ch.onchange=function(){
+          var uname=ch.getAttribute('data-user'), tab=ch.getAttribute('data-tab'), k=ch.getAttribute('data-k');
+          var u=db.users.find(function(x){return x.username===uname;});
+          u.perms=u.perms||{}; u.perms[tab]=u.perms[tab]||{}; u.perms[tab][k]=ch.checked; save();
+        };
+      });
+    }
+    rows();
+
+    wrap.addEventListener('click', function(ev){
+      var b=ev.target.closest('button'); if(!b) return;
+      if(b.dataset.act==='del'){
+        var uname=b.dataset.user; if(uname==='admin') return alert('Cannot delete admin');
+        db.users=db.users.filter(function(u){ return u.username!==uname; }); save(); rows();
+      }
+    });
+
+    wrap.querySelector('#u_add').onclick=function(){
+      var u={username:wrap.querySelector('#u_name').value.trim(), password:wrap.querySelector('#u_pass').value.trim(), role:wrap.querySelector('#u_role').value, perms:{}};
+      if(!u.username||!u.password) return alert('Enter username and password');
+      if(db.users.find(function(x){return x.username===u.username;})) return alert('User exists');
+      db.users.push(u); save(); render();
+    };
+    wrap.querySelector('#pw_save').onclick=function(){
+      var pw=wrap.querySelector('#pw_new').value.trim(); if(!pw) return alert('Enter new password');
+      var u=db.users.find(function(x){return x.username===session.username;}); if(!u) return alert('User not found');
+      u.password=pw; save(); alert('Password updated');
+    };
+
+    return wrap;
+  }
+
+  window.printFinanceProforma = function(vid, deliverTo, buyerName, dateISO, proposedPrice, deposit, finance, partex){
+    var v=db.vehicles.find(function(x){return x.id===vid;}); if(!v){ alert('Vehicle not found'); return; }
+    var co=db.company||{};
+    var ddmy = function(iso){ return (iso||'').split('-').reverse().join('/'); };
+    var logo = db.logo ? '<img src="'+db.logo+'" style="height:60px">' : '<div style="font-size:26px;font-weight:800">STARCARSLONDON</div><div style="font-size:12px)">'+(co.website||'')+'</div>';
+    var html='<!doctype html><html><head><meta charset="utf-8"><title>Finance Proforma</title><style>@page{size:A4;margin:12mm 14mm} body{font-family:Arial,Helvetica,sans-serif}.print{max-width:730px;margin:0 auto}.head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #000;padding-bottom:8px;margin-bottom:12px}.table{width:100%;border-collapse:collapse} .table th,.table td{border:1px solid #000;padding:8px;text-align:left}.mono{font-family:Consolas,monospace}.right{text-align:right}</style></head><body>';
+    html+='<div class="print"><div class="head"><div>'+logo+'</div><div style="text-align:right;font-size:12px"><div><b>'+ (co.name||'') +'</b></div><div>'+ (co.address||'') +'</div><div>P: '+ (co.phone||'') +' '+ (co.email||'') +'</div><div>COMPANY #: '+ (co.companyNumber||'') +' &nbsp; VAT # '+ (co.vatNumber||'') +'</div></div></div>';
+    html+='<h2>PROFORMA INVOICE</h2>';
+    html+='<table class="table"><tr><th>DATE</th><td>'+ddmy(dateISO)+'</td></tr><tr><th>DELIVER TO</th><td>'+ (deliverTo||'') +'</td></tr>';
+    if(buyerName){ html+='<tr><th>CUSTOMER</th><td>'+buyerName+'</td></tr>'; }
+    html+='<tr><th>VEHICLE</th><td>'+(v.reg||'')+' • '+(v.make||'')+' '+(v.model||'')+'</td></tr>';
+    html+='<tr><th>CASH PRICE</th><td class="right mono)">'+fmtMoney(proposedPrice)+'</td></tr>';
+    html+='<tr><th>DEPOSIT</th><td class="right mono)">'+fmtMoney(deposit)+'</td></tr>';
+    html+='<tr><th>FINANCE</th><td class="right mono)">'+fmtMoney(finance)+'</td></tr>';
+    if(partex){ html+='<tr><th>PART EX</th><td>'+partex+'</td></tr>'; }
+    var totalPaid = Number(deposit||0)+Number(finance||0);
+    html+='<tr><th>TOTAL PAID</th><td class="right mono)">'+fmtMoney(totalPaid)+'</td></tr>';
+    html+='</table>';
+    html+='<div style="margin-top:10px;font-size:12px">Proforma issued for finance approval purposes only. Vehicle remains in stock and may be sold to another customer until funds clear.</div>';
+    html+='</div></body></html>';
+    var win=window.open('','_blank'); win.document.write(html); win.document.close(); win.onload=function(){ try{ win.print(); }catch(e){} };
+  };
+
+  function render(){
+    renderNav(); renderHeaderLogo();
+    var app=document.getElementById('app'); var v=null;
+    var visible=TABS.filter(function(t){ return canView(t); });
+    if(visible.indexOf(currentTab)<0) currentTab=visible[0]||'Dashboard';
+    if(currentTab==='Dashboard') v=viewDashboard();
+    else if(currentTab==='Vehicles') v=viewVehicles();
+    else if(currentTab==='Expenses') v=viewExpenses();
+    else if(currentTab==='Showroom') v=viewShowroom();
+    else if(currentTab==='Sales') v=viewSales();
+    else if(currentTab==='To-Do') v=viewTodo();
+    else if(currentTab==='Directors') v=viewDirectors();
+    else if(currentTab==='Investors') v=viewInvestors();
+    else if(currentTab==='Finance Proforma') v=viewFinanceProforma();
+    else if(currentTab==='Reports') v=viewReports();
+    else if(currentTab==='Settings') v=viewSettings();
+    else if(currentTab==='Users') v=viewUsers();
+    else v=viewDashboard();
+    app.innerHTML=''; app.appendChild(v);
+  }
+
+  render();
+})();</script>
+</body>
+</html>
